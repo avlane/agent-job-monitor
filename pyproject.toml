@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-job-monitor"
+version = "0.1.0"
+description = "Monitor SQL Server Agent jobs: failures, overruns against rolling baselines and missed schedules"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "Avery Lane"}]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Database",
+]
+dependencies = []
+
+[project.optional-dependencies]
+sqlserver = ["pyodbc>=4.0.30"]
+
+[project.scripts]
+agent-job-monitor = "agent_job_monitor.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["agent_job_monitor*"]
