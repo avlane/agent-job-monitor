@@ -38,6 +38,7 @@ class FakeConnection:
         self.responders = [
             ("GETDATE()", lambda c, p: [c.doc["server"]]),
             ("FROM msdb.dbo.sysjobs AS j", lambda c, p: c.doc["jobs"]),
+            ("FROM msdb.dbo.sysjobhistory AS h", lambda c, p: c.doc["history"]),
         ]
 
     def cursor(self):
