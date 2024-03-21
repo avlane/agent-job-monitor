@@ -66,15 +66,34 @@ def consecutive_failures(runs):
     return count
 
 
+def failed_step(run):
+    """The first step of the run that failed, or None (the job may have failed outside any step)."""
+    for step in run.steps:
+        if step.status == FAILED:
+            return step
+    return None
+
+
+def shorten(text, limit=200):
+    """One line of at most `limit` characters; Agent messages are long and repeat the account name."""
+    text = " ".join((text or "").split())
+    return text if len(text) <= limit else text[:limit - 3].rstrip() + "..."
+
+
 def check_failures(job, runs, thresholds):
     if not runs or runs[-1].status != FAILED:
         return []
     last = runs[-1]
     count = consecutive_failures(runs)
     severity = CRITICAL if count >= thresholds.critical_failures else WARNING
-    return [Finding(job.name, "JOB_FAILED", severity,
-                    "%d consecutive failure(s), the last started at %s" % (count, last.start.strftime("%Y-%m-%d %H:%M")),
-                    {"consecutive_failures": count, "last_start": last.start.isoformat()})]
+    message = "%d consecutive failure(s), the last started at %s" % (count, last.start.strftime("%Y-%m-%d %H:%M"))
+    detail = {"consecutive_failures": count, "last_start": last.start.isoformat()}
+    step = failed_step(last)
+    if step is not None:
+        message += "; step %d '%s' failed: %s" % (step.step_id, step.name, shorten(step.message))
+        detail.update(step_id=step.step_id, step_name=step.name, sql_message_id=step.sql_message_id,
+                      sql_severity=step.sql_severity)
+    return [Finding(job.name, "JOB_FAILED", severity, message, detail)]
 
 
 def analyse(server, jobs, runs, config):
