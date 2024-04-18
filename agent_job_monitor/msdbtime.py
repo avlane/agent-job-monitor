@@ -30,3 +30,15 @@ def encode_datetime(moment):
 def encode_duration(seconds):
     seconds = int(seconds)
     return (seconds // 3600) * 10000 + (seconds % 3600 // 60) * 100 + seconds % 60
+
+
+def format_duration(seconds):
+    """45 -> "45s", 1560 -> "26m 00s", 3725 -> "1h 02m 05s"."""
+    seconds = int(round(seconds))
+    hours, rest = divmod(seconds, 3600)
+    minutes, secs = divmod(rest, 60)
+    if hours:
+        return "%dh %02dm %02ds" % (hours, minutes, secs)
+    if minutes:
+        return "%dm %02ds" % (minutes, secs)
+    return "%ds" % secs

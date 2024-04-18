@@ -1,9 +1,11 @@
 """Compare job history with the thresholds and produce findings."""
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
 
+from .baseline import baseline_before
 from .model import FAILED
+from .msdbtime import format_duration
 
 
 class Severity(StrEnum):
@@ -96,6 +98,42 @@ def check_failures(job, runs, thresholds):
     return [Finding(job.name, "JOB_FAILED", severity, message, detail)]
 
 
+def overrun_limit(baseline, thresholds):
+    """The duration above which a run counts as too long: the larger of a multiple of the median and
+    the median plus a few robust standard deviations."""
+    return max(baseline.median * thresholds.overrun_factor,
+               baseline.median + thresholds.overrun_mad_multiplier * baseline.sigma)
+
+
+def check_overruns(job, runs, thresholds, now):
+    """The worst overrun among the successful runs that started within the look-back window."""
+    window_start = now - timedelta(hours=thresholds.lookback_hours)
+    worst, count = None, 0
+    for index, run in enumerate(runs):
+        if not run.succeeded or run.start < window_start:
+            continue
+        base = baseline_before(runs, index, thresholds.baseline_runs)
+        if base is None or base.runs < thresholds.min_runs:
+            continue
+        limit = overrun_limit(base, thresholds)
+        if run.duration > limit and run.duration - base.median >= thresholds.min_overrun_seconds:
+            count += 1
+            ratio = run.duration / base.median if base.median else float("inf")
+            if worst is None or ratio > worst[0]:
+                worst = (ratio, run, base, limit)
+    if worst is None:
+        return []
+    ratio, run, base, limit = worst
+    severity = CRITICAL if ratio >= thresholds.critical_overrun_factor else WARNING
+    message = "the run that started at %s took %s, %.1f times the median %s of the previous %d runs (limit %s)" % (
+        run.start.strftime("%Y-%m-%d %H:%M"), format_duration(run.duration), ratio, format_duration(base.median),
+        base.runs, format_duration(limit))
+    return [Finding(job.name, "JOB_OVERRUN", severity, message,
+                    {"start": run.start.isoformat(), "duration_seconds": run.duration, "ratio": round(ratio, 2),
+                     "median_seconds": base.median, "p95_seconds": base.p95, "limit_seconds": round(limit),
+                     "baseline_runs": base.runs, "overruns_in_window": count})]
+
+
 def analyse(server, jobs, runs, config):
     """Findings for every enabled job. `runs` is {job_id: [JobRun, ...]} oldest first."""
     checked, findings = [], []
@@ -104,5 +142,6 @@ def analyse(server, jobs, runs, config):
             continue
         checked.append(job.name)
         findings += check_failures(job, runs.get(job.job_id, []), config.thresholds)
+        findings += check_overruns(job, runs.get(job.job_id, []), config.thresholds, server.now)
     findings.sort(key=lambda f: (f.severity.rank, f.job.lower(), f.code))
     return Report(server.name, server.now, checked, findings)
