@@ -1,5 +1,10 @@
-"""Thresholds for the checks."""
-from dataclasses import dataclass, field
+"""Thresholds for the checks, read from a TOML file."""
+import tomllib
+from dataclasses import dataclass, field, fields, replace
+
+
+class ConfigError(ValueError):
+    """The configuration file is unreadable or invalid."""
 
 
 @dataclass(frozen=True)
@@ -17,3 +22,40 @@ class Thresholds:
 @dataclass
 class Config:
     thresholds: Thresholds = field(default_factory=Thresholds)
+
+
+def _thresholds(section):
+    if not isinstance(section, dict):
+        raise ConfigError("[thresholds] must be a table")
+    known = {f.name: f for f in fields(Thresholds)}
+    unknown = set(section) - set(known)
+    if unknown:
+        raise ConfigError("[thresholds]: unknown key(s): %s" % ", ".join(sorted(unknown)))
+    values = {}
+    for key, value in section.items():
+        wants_int = isinstance(getattr(Thresholds(), key), int)
+        valid = isinstance(value, int) if wants_int else isinstance(value, (int, float))
+        if isinstance(value, bool) or not valid or value <= 0:
+            raise ConfigError("[thresholds] %s must be a positive %s" % (key, "whole number" if wants_int else "number"))
+        values[key] = value
+    return replace(Thresholds(), **values)
+
+
+def parse_config(data):
+    if not isinstance(data, dict):
+        raise ConfigError("the top level of the config must be a table")
+    unknown = set(data) - {"thresholds"}
+    if unknown:
+        raise ConfigError("unknown key(s): %s" % ", ".join(sorted(unknown)))
+    return Config(_thresholds(data.get("thresholds", {})))
+
+
+def load_config(path):
+    try:
+        with open(path, "rb") as fh:
+            data = tomllib.load(fh)
+    except OSError as exc:
+        raise ConfigError("cannot read %s: %s" % (path, exc)) from exc
+    except tomllib.TOMLDecodeError as exc:
+        raise ConfigError("%s is not valid TOML: %s" % (path, exc)) from exc
+    return parse_config(data)
