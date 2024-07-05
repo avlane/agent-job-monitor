@@ -1,4 +1,6 @@
 """Render a Report as text or JSON."""
+import json
+from dataclasses import asdict
 
 
 def render_text(report):
@@ -16,7 +18,17 @@ def render_text(report):
     return "\n".join(lines) + "\n"
 
 
-RENDERERS = {"text": render_text}
+def render_json(report):
+    doc = {
+        "server": report.server,
+        "server_time": report.now.isoformat(timespec="seconds"),
+        "summary": report.counts(),
+        "findings": [asdict(f) for f in report.findings],
+    }
+    return json.dumps(doc, indent=2) + "\n"
+
+
+RENDERERS = {"text": render_text, "json": render_json}
 
 
 def render(report, fmt="text"):

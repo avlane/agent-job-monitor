@@ -87,3 +87,14 @@ class CliTest(unittest.TestCase):
             with self.assertRaises(SystemExit) as ctx:
                 main([flag])
             self.assertEqual(ctx.exception.code, 0)
+
+
+class JsonOutputTest(unittest.TestCase):
+    def test_json_from_the_command_line(self):
+        import json
+
+        code, out = run("--format", "json", fixture="problems")
+        self.assertEqual(code, 2)
+        doc = json.loads(out)
+        self.assertEqual(doc["summary"]["critical"], 1)
+        self.assertIn("ETL load", {f["job"] for f in doc["findings"]})
