@@ -1,7 +1,7 @@
 """SQL used to read Agent jobs and history from msdb, and the row mapping."""
 from datetime import datetime
 
-from .model import Job, ServerInfo
+from .model import Job, RunningJob, ServerInfo
 
 SERVER_SQL = """
 SELECT @@SERVERNAME AS server_name,
@@ -65,5 +65,29 @@ def fetch_history_rows(conn, since):
     try:
         cur.execute(HISTORY_SQL, since.year * 10000 + since.month * 100 + since.day)
         return rows_as_dicts(cur)
+    finally:
+        cur.close()
+
+
+ACTIVITY_SQL = """
+SELECT CONVERT(varchar(36), ja.job_id) AS job_id, ja.start_execution_date,
+       ja.last_executed_step_id, ja.last_executed_step_date
+FROM msdb.dbo.sysjobactivity AS ja
+WHERE ja.session_id = (SELECT MAX(session_id) FROM msdb.dbo.syssessions)
+  AND ja.start_execution_date IS NOT NULL
+  AND ja.stop_execution_date IS NULL;
+"""
+
+
+def fetch_running(conn):
+    """{job_id: RunningJob} for the jobs that are executing in the current Agent session."""
+    cur = conn.cursor()
+    try:
+        cur.execute(ACTIVITY_SQL)
+        return {
+            row["job_id"]: RunningJob(row["job_id"], _dt(row["start_execution_date"]),
+                                      int(row["last_executed_step_id"] or 0), _dt(row["last_executed_step_date"]))
+            for row in rows_as_dicts(cur)
+        }
     finally:
         cur.close()

@@ -54,3 +54,13 @@ class ServerInfo:
     name: str
     now: datetime  # GETDATE() on the server; msdb times are in this clock
     agent_start: Optional[datetime] = None
+
+
+@dataclass
+class RunningJob:
+    """A job that is executing now (sysjobactivity of the current Agent session)."""
+
+    job_id: str
+    start: datetime
+    last_step_id: int = 0
+    last_step_date: Optional[datetime] = None

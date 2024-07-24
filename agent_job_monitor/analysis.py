@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import StrEnum
 
-from .baseline import baseline_before
+from .baseline import baseline_before, compute_baseline
 from .model import FAILED
 from .msdbtime import format_duration
 
@@ -134,7 +134,31 @@ def check_overruns(job, runs, thresholds, now):
                      "baseline_runs": base.runs, "overruns_in_window": count})]
 
 
-def analyse(server, jobs, runs, config):
+def check_running(job, runs, running, thresholds, now):
+    """A job that is executing now for much longer than its successful runs usually take."""
+    if running is None:
+        return []
+    elapsed = (now - running.start).total_seconds()
+    earlier = [r.duration for r in runs if r.succeeded][-thresholds.baseline_runs:]
+    base = compute_baseline(earlier)
+    if base is None or base.runs < thresholds.min_runs:
+        return []
+    limit = overrun_limit(base, thresholds)
+    if elapsed <= limit or elapsed - base.median < thresholds.min_overrun_seconds:
+        return []
+    ratio = elapsed / base.median if base.median else float("inf")
+    severity = CRITICAL if ratio >= thresholds.critical_overrun_factor else WARNING
+    message = "running since %s (%s), %.1f times the median %s of the previous %d runs (limit %s)" % (
+        running.start.strftime("%Y-%m-%d %H:%M"), format_duration(elapsed), ratio, format_duration(base.median),
+        base.runs, format_duration(limit))
+    if running.last_step_id:
+        message += "; last step finished: %d" % running.last_step_id
+    return [Finding(job.name, "JOB_RUNNING_LONG", severity, message,
+                    {"start": running.start.isoformat(), "elapsed_seconds": round(elapsed), "ratio": round(ratio, 2),
+                     "median_seconds": base.median, "limit_seconds": round(limit), "last_step_id": running.last_step_id})]
+
+
+def analyse(server, jobs, runs, config, running=None):
     """Findings for every enabled job. `runs` is {job_id: [JobRun, ...]} oldest first."""
     checked, findings = [], []
     for job in jobs:
@@ -143,5 +167,7 @@ def analyse(server, jobs, runs, config):
         checked.append(job.name)
         findings += check_failures(job, runs.get(job.job_id, []), config.thresholds)
         findings += check_overruns(job, runs.get(job.job_id, []), config.thresholds, server.now)
+        findings += check_running(job, runs.get(job.job_id, []), (running or {}).get(job.job_id),
+                                  config.thresholds, server.now)
     findings.sort(key=lambda f: (f.severity.rank, f.job.lower(), f.code))
     return Report(server.name, server.now, checked, findings)
