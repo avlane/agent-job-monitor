@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from enum import StrEnum
 
 from .baseline import baseline_before, compute_baseline
-from .model import FAILED
+from .model import FAILED, SUCCEEDED
 from .msdbtime import format_duration
 
 
@@ -134,6 +134,39 @@ def check_overruns(job, runs, thresholds, now):
                      "baseline_runs": base.runs, "overruns_in_window": count})]
 
 
+def check_steps(job, runs, thresholds, now):
+    """The step of a recent successful run that took the longest compared with the same step before."""
+    window_start = now - timedelta(hours=thresholds.lookback_hours)
+    worst = None
+    for index, run in enumerate(runs):
+        if not run.succeeded or run.start < window_start:
+            continue
+        earlier = [r for r in runs[:index] if r.succeeded]
+        for step in run.steps:
+            if step.status != SUCCEEDED:
+                continue
+            history = [s.duration for r in earlier for s in r.steps
+                       if s.step_id == step.step_id and s.status == SUCCEEDED][-thresholds.baseline_runs:]
+            base = compute_baseline(history)
+            if base is None or base.runs < thresholds.min_runs:
+                continue
+            if step.duration > overrun_limit(base, thresholds) and \
+                    step.duration - base.median >= thresholds.step_min_overrun_seconds:
+                ratio = step.duration / base.median if base.median else float("inf")
+                if worst is None or ratio > worst[0]:
+                    worst = (ratio, run, step, base)
+    if worst is None:
+        return []
+    ratio, run, step, base = worst
+    message = "step %d '%s' of the run that started at %s took %s, %.1f times its median %s" % (
+        step.step_id, step.name, run.start.strftime("%Y-%m-%d %H:%M"), format_duration(step.duration), ratio,
+        format_duration(base.median))
+    return [Finding(job.name, "STEP_OVERRUN", WARNING, message,
+                    {"run_start": run.start.isoformat(), "step_id": step.step_id, "step_name": step.name,
+                     "duration_seconds": step.duration, "ratio": round(ratio, 2), "median_seconds": base.median,
+                     "baseline_runs": base.runs})]
+
+
 def check_running(job, runs, running, thresholds, now):
     """A job that is executing now for much longer than its successful runs usually take."""
     if running is None:
@@ -167,6 +200,13 @@ def analyse(server, jobs, runs, config, running=None):
         checked.append(job.name)
         findings += check_failures(job, runs.get(job.job_id, []), config.thresholds)
         findings += check_overruns(job, runs.get(job.job_id, []), config.thresholds, server.now)
+        steps = check_steps(job, runs.get(job.job_id, []), config.thresholds, server.now)
+        explained = {f.detail["start"] for f in findings if f.job == job.name and f.code == "JOB_OVERRUN"}
+        for f in steps:
+            if f.detail["run_start"] in explained:
+                f.severity = INFO
+                f.message += "; this is what made the job overrun"
+        findings += steps
         findings += check_running(job, runs.get(job.job_id, []), (running or {}).get(job.job_id),
                                   config.thresholds, server.now)
     findings.sort(key=lambda f: (f.severity.rank, f.job.lower(), f.code))

@@ -17,6 +17,7 @@ class Thresholds:
     overrun_mad_multiplier: float = 4.0  # ... when it is also this many robust standard deviations above it
     min_overrun_seconds: int = 300  # ... and at least this much longer than the median
     critical_overrun_factor: float = 4.0  # times the median that make an overrun critical
+    step_min_overrun_seconds: int = 120  # a step must also be this much longer than its median to be reported
 
 
 @dataclass
