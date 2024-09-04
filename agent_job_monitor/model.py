@@ -1,6 +1,6 @@
 """Plain data objects for Agent jobs and their history."""
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 FAILED, SUCCEEDED, RETRY, CANCELED, IN_PROGRESS = 0, 1, 2, 3, 4
@@ -64,3 +64,24 @@ class RunningJob:
     start: datetime
     last_step_id: int = 0
     last_step_date: Optional[datetime] = None
+
+
+@dataclass
+class Schedule:
+    """One schedule of a job (sysschedules joined to sysjobschedules)."""
+
+    job_id: str
+    schedule_id: int
+    name: str
+    enabled: bool
+    freq_type: int  # 1 once, 4 daily, 8 weekly, 16 monthly, 32 monthly relative, 64 at Agent start, 128 when idle
+    freq_interval: int
+    freq_subday_type: int  # 1 at the start time, 2 seconds, 4 minutes, 8 hours
+    freq_subday_interval: int
+    freq_relative_interval: int
+    freq_recurrence_factor: int
+    active_start_date: date
+    active_end_date: date
+    active_start_seconds: int  # seconds since midnight
+    active_end_seconds: int
+    next_run: Optional[datetime] = None

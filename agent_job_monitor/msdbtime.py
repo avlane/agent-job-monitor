@@ -1,5 +1,5 @@
 """Decode the integer encodings that msdb uses for dates, times and durations."""
-from datetime import datetime
+from datetime import date, datetime
 
 
 def decode_datetime(run_date, run_time):
@@ -42,3 +42,22 @@ def format_duration(seconds):
     if minutes:
         return "%dm %02ds" % (minutes, secs)
     return "%ds" % secs
+
+
+def decode_date(value):
+    """20240502 -> date(2024, 5, 2); None for 0 or an impossible date."""
+    if not value:
+        return None
+    year, rest = divmod(int(value), 10000)
+    month, day = divmod(rest, 100)
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
+
+
+def decode_seconds_of_day(value):
+    """A time stored as HHMMSS, as seconds since midnight: 13045 -> 5445."""
+    hours, rest = divmod(int(value or 0), 10000)
+    minutes, seconds = divmod(rest, 100)
+    return hours * 3600 + minutes * 60 + seconds

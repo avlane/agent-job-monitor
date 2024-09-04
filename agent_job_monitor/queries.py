@@ -1,7 +1,8 @@
 """SQL used to read Agent jobs and history from msdb, and the row mapping."""
-from datetime import datetime
+from datetime import date, datetime
 
-from .model import Job, RunningJob, ServerInfo
+from .model import Job, RunningJob, Schedule, ServerInfo
+from .msdbtime import decode_date, decode_datetime, decode_seconds_of_day
 
 SERVER_SQL = """
 SELECT @@SERVERNAME AS server_name,
@@ -89,5 +90,40 @@ def fetch_running(conn):
                                       int(row["last_executed_step_id"] or 0), _dt(row["last_executed_step_date"]))
             for row in rows_as_dicts(cur)
         }
+    finally:
+        cur.close()
+
+
+SCHEDULES_SQL = """
+SELECT CONVERT(varchar(36), js.job_id) AS job_id, s.schedule_id, s.name, s.enabled, s.freq_type, s.freq_interval,
+       s.freq_subday_type, s.freq_subday_interval, s.freq_relative_interval, s.freq_recurrence_factor,
+       s.active_start_date, s.active_end_date, s.active_start_time, s.active_end_time,
+       js.next_run_date, js.next_run_time
+FROM msdb.dbo.sysjobschedules AS js
+JOIN msdb.dbo.sysschedules AS s ON s.schedule_id = js.schedule_id
+ORDER BY js.job_id, s.schedule_id;
+"""
+
+
+def fetch_schedules(conn):
+    """{job_id: [Schedule, ...]}"""
+    cur = conn.cursor()
+    try:
+        cur.execute(SCHEDULES_SQL)
+        schedules = {}
+        for row in rows_as_dicts(cur):
+            schedules.setdefault(row["job_id"], []).append(Schedule(
+                job_id=row["job_id"], schedule_id=int(row["schedule_id"]), name=row["name"], enabled=bool(row["enabled"]),
+                freq_type=int(row["freq_type"]), freq_interval=int(row["freq_interval"]),
+                freq_subday_type=int(row["freq_subday_type"]), freq_subday_interval=int(row["freq_subday_interval"]),
+                freq_relative_interval=int(row["freq_relative_interval"]),
+                freq_recurrence_factor=int(row["freq_recurrence_factor"]),
+                active_start_date=decode_date(row["active_start_date"]) or date.min,
+                active_end_date=decode_date(row["active_end_date"]) or date.max,
+                active_start_seconds=decode_seconds_of_day(row["active_start_time"]),
+                active_end_seconds=decode_seconds_of_day(row["active_end_time"]),
+                next_run=decode_datetime(row["next_run_date"], row["next_run_time"]),
+            ))
+        return schedules
     finally:
         cur.close()

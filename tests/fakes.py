@@ -40,6 +40,7 @@ class FakeConnection:
             ("FROM msdb.dbo.sysjobs AS j", lambda c, p: c.doc["jobs"]),
             ("FROM msdb.dbo.sysjobhistory AS h", lambda c, p: c.doc["history"]),
             ("FROM msdb.dbo.sysjobactivity AS ja", lambda c, p: c.doc["activity"]),
+            ("FROM msdb.dbo.sysjobschedules AS js", lambda c, p: c.doc["schedules"]),
         ]
 
     def cursor(self):
