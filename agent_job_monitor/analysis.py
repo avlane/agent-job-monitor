@@ -6,6 +6,7 @@ from enum import StrEnum
 from .baseline import baseline_before, compute_baseline
 from .model import FAILED, SUCCEEDED
 from .msdbtime import format_duration
+from .schedules import expected_runs
 
 
 class Severity(StrEnum):
@@ -167,6 +168,50 @@ def check_steps(job, runs, thresholds, now):
                      "baseline_runs": base.runs})]
 
 
+def check_missed(job, runs, running, schedules, thresholds, now, agent_start=None):
+    """Scheduled starts in the look-back window for which the job has no run.
+
+    Expected times are computed from the enabled schedules. A start is not missed if the job was
+    already running then (the Agent skips it) or if the Agent was not running yet. History before
+    the oldest known run is not judged: it may simply have been purged.
+    """
+    if not job.enabled:
+        return []
+    schedules = [s for s in schedules if s.enabled]
+    if not schedules:
+        return []
+    starts = [r.start for r in runs] + ([running.start] if running else [])
+    if not starts:
+        return []
+    grace = timedelta(minutes=thresholds.grace_minutes)
+    window_start = max(now - timedelta(hours=thresholds.lookback_hours), min(starts) - grace)
+    if agent_start is not None:
+        window_start = max(window_start, agent_start)
+    window_end = now - grace
+    if window_end < window_start:
+        return []
+    expected = sorted({t for s in schedules for t in expected_runs(s, window_start, window_end)})
+    busy = [(r.start, r.end) for r in runs] + ([(running.start, now)] if running else [])
+    missed, skipped = [], []
+    for t in expected:
+        if any(t - timedelta(seconds=60) <= s <= t + grace for s in starts):
+            continue
+        (skipped if any(begin < t < end for begin, end in busy) else missed).append(t)
+    findings = []
+    if missed:
+        severity = CRITICAL if len(missed) >= thresholds.critical_missed else WARNING
+        shown = ", ".join(t.strftime("%Y-%m-%d %H:%M") for t in missed[:5]) + (", ..." if len(missed) > 5 else "")
+        findings.append(Finding(job.name, "SCHEDULE_MISSED", severity,
+                                "%d scheduled run(s) did not start: %s" % (len(missed), shown),
+                                {"missed": [t.isoformat() for t in missed], "expected_in_window": len(expected)}))
+    if skipped:
+        findings.append(Finding(job.name, "SCHEDULE_SKIPPED", INFO,
+                                "%d scheduled run(s) were skipped because the previous run was still going: %s" % (
+                                    len(skipped), ", ".join(t.strftime("%Y-%m-%d %H:%M") for t in skipped[:5])),
+                                {"skipped": [t.isoformat() for t in skipped]}))
+    return findings
+
+
 def check_running(job, runs, running, thresholds, now):
     """A job that is executing now for much longer than its successful runs usually take."""
     if running is None:
@@ -191,7 +236,7 @@ def check_running(job, runs, running, thresholds, now):
                      "median_seconds": base.median, "limit_seconds": round(limit), "last_step_id": running.last_step_id})]
 
 
-def analyse(server, jobs, runs, config, running=None):
+def analyse(server, jobs, runs, config, running=None, schedules=None):
     """Findings for every enabled job. `runs` is {job_id: [JobRun, ...]} oldest first."""
     checked, findings = [], []
     for job in jobs:
@@ -209,5 +254,7 @@ def analyse(server, jobs, runs, config, running=None):
         findings += steps
         findings += check_running(job, runs.get(job.job_id, []), (running or {}).get(job.job_id),
                                   config.thresholds, server.now)
+        findings += check_missed(job, runs.get(job.job_id, []), (running or {}).get(job.job_id),
+                                 (schedules or {}).get(job.job_id, []), config.thresholds, server.now, server.agent_start)
     findings.sort(key=lambda f: (f.severity.rank, f.job.lower(), f.code))
     return Report(server.name, server.now, checked, findings)

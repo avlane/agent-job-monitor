@@ -18,6 +18,8 @@ class Thresholds:
     min_overrun_seconds: int = 300  # ... and at least this much longer than the median
     critical_overrun_factor: float = 4.0  # times the median that make an overrun critical
     step_min_overrun_seconds: int = 120  # a step must also be this much longer than its median to be reported
+    grace_minutes: float = 10.0  # a scheduled run may start this late before it counts as missed
+    critical_missed: int = 3  # missed runs in the window that make the finding critical
 
 
 @dataclass

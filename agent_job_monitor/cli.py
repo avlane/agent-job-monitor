@@ -102,7 +102,7 @@ def main(argv=None, connect=None, stdout=None):
         jobs = select_jobs(collected.jobs, args.job)
     except LookupError as exc:
         return _error(exc)
-    report = analyse(collected.server, jobs, collected.runs, config, collected.running)
+    report = analyse(collected.server, jobs, collected.runs, config, collected.running, collected.schedules)
     text = render(report, args.format)
     if args.output:
         with open(args.output, "w", encoding="utf-8") as fh:
