@@ -23,7 +23,7 @@ It only reads from the server.
   overran in the same run, the slow step is only informational: it explains the overrun.
 * *Running now*: `sysjobactivity` of the current Agent session, with the same limit.
 * *Missed schedules*: the expected start times are computed from the enabled schedules (once, daily and
-  weekly; monthly schedules are not checked yet) and compared with the runs. A start counts if the run began
+  weekly and monthly) and compared with the runs. A start counts if the run began
   within `grace_minutes` (10) after it. Starts that fall inside an earlier run of the same job are reported
   as skipped (informational), starts before the Agent came up are not expected, and a job with no history at
   all is not judged.

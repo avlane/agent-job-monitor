@@ -1,5 +1,5 @@
 """Work out when a job should have started, from its schedule definition."""
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 FREQ_ONCE, FREQ_DAILY, FREQ_WEEKLY, FREQ_MONTHLY, FREQ_MONTHLY_RELATIVE = 1, 4, 8, 16, 32
 SUBDAY_AT, SUBDAY_SECONDS, SUBDAY_MINUTES, SUBDAY_HOURS = 1, 2, 4, 8
@@ -15,6 +15,26 @@ def _sunday_on_or_before(day):
     return day - timedelta(days=(day.weekday() + 1) % 7)
 
 
+def relative_day(year, month, which, kind):
+    """The date for "the first Monday", "the last weekday" ... of a month, as SQL Agent defines them.
+
+    `which` is freq_relative_interval (1 first, 2 second, 4 third, 8 fourth, 16 last); `kind` is
+    freq_interval (1 Sunday ... 7 Saturday, 8 day, 9 weekday, 10 weekend day).
+    """
+    days = []
+    day = date(year, month, 1)
+    while day.month == month:
+        weekday_bit = sql_weekday_bit(day)
+        if (kind in range(1, 8) and weekday_bit == 1 << (kind - 1)) or kind == 8 \
+                or (kind == 9 and day.weekday() < 5) or (kind == 10 and day.weekday() >= 5):
+            days.append(day)
+        day += timedelta(days=1)
+    position = {1: 0, 2: 1, 4: 2, 8: 3, 16: -1}.get(which)
+    if position is None or not days or (position >= 0 and position >= len(days)):
+        return None
+    return days[position]
+
+
 def runs_on_day(schedule, day):
     """Does the schedule fire on this date (ignoring the time of day)?"""
     if day < schedule.active_start_date or day > schedule.active_end_date:
@@ -27,7 +47,14 @@ def runs_on_day(schedule, day):
     if schedule.freq_type == FREQ_WEEKLY:
         weeks = (_sunday_on_or_before(day) - _sunday_on_or_before(schedule.active_start_date)).days // 7
         return bool(schedule.freq_interval & sql_weekday_bit(day)) and weeks % factor == 0
-    return False  # monthly schedules are not handled yet; at-start and idle schedules have no clock times
+    if schedule.freq_type in (FREQ_MONTHLY, FREQ_MONTHLY_RELATIVE):
+        months = (day.year - schedule.active_start_date.year) * 12 + day.month - schedule.active_start_date.month
+        if months % factor:
+            return False
+        if schedule.freq_type == FREQ_MONTHLY:
+            return day.day == schedule.freq_interval  # day 31 in a 30-day month does not run
+        return day == relative_day(day.year, day.month, schedule.freq_relative_interval, schedule.freq_interval)
+    return False  # at-start and idle schedules have no clock times
 
 
 def times_of_day(schedule):
