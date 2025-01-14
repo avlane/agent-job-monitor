@@ -35,7 +35,8 @@ def build_parser():
                    help="only check jobs whose name matches (wildcards * and ?; repeatable)")
     p.add_argument("--history-days", type=int, default=30, metavar="N",
                    help="how many days of job history to read (default: %(default)s)")
-    p.add_argument("--format", choices=("text", "json"), default="text", help="report format (default: text)")
+    p.add_argument("--format", choices=("text", "json", "prometheus"), default="text",
+                   help="report format (default: text)")
     p.add_argument("-o", "--output", help="write the report to this file instead of stdout")
     p.add_argument("--user", help="SQL login; the password is read from AGENT_JOB_MONITOR_PASSWORD")
     p.add_argument("--driver", default=DEFAULT_DRIVER, help="ODBC driver name (default: %(default)s)")

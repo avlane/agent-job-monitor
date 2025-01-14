@@ -2,6 +2,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import StrEnum
+from typing import Optional
 
 from .baseline import baseline_before, compute_baseline
 from .model import FAILED, SUCCEEDED
@@ -38,6 +39,7 @@ class Report:
     now: datetime
     checked: list  # names of the jobs that were examined
     findings: list
+    summaries: dict = field(default_factory=dict)  # job name -> JobSummary, disabled jobs included
 
     def worst_by_job(self):
         worst = {}
@@ -236,25 +238,53 @@ def check_running(job, runs, running, thresholds, now):
                      "median_seconds": base.median, "limit_seconds": round(limit), "last_step_id": running.last_step_id})]
 
 
+@dataclass
+class JobSummary:
+    """The state of one job, for the metrics: what its last run did and how long it has been going."""
+
+    name: str
+    enabled: bool
+    last_status: Optional[int] = None
+    last_start: Optional[datetime] = None
+    last_duration: Optional[int] = None
+    consecutive_failures: int = 0
+    running_seconds: Optional[int] = None
+    missed_runs: int = 0
+
+
+def summarise(job, runs, running, now):
+    summary = JobSummary(job.name, job.enabled, consecutive_failures=consecutive_failures(runs))
+    if runs:
+        last = runs[-1]
+        summary.last_status, summary.last_start, summary.last_duration = last.status, last.start, last.duration
+    if running is not None:
+        summary.running_seconds = max(0, round((now - running.start).total_seconds()))
+    return summary
+
+
 def analyse(server, jobs, runs, config, running=None, schedules=None):
     """Findings for every enabled job. `runs` is {job_id: [JobRun, ...]} oldest first."""
-    checked, findings = [], []
+    running, schedules = running or {}, schedules or {}
+    checked, findings, summaries = [], [], {}
     for job in jobs:
+        job_runs, current = runs.get(job.job_id, []), running.get(job.job_id)
+        summaries[job.name] = summarise(job, job_runs, current, server.now)
         if not job.enabled:
             continue
         checked.append(job.name)
-        findings += check_failures(job, runs.get(job.job_id, []), config.thresholds)
-        findings += check_overruns(job, runs.get(job.job_id, []), config.thresholds, server.now)
-        steps = check_steps(job, runs.get(job.job_id, []), config.thresholds, server.now)
-        explained = {f.detail["start"] for f in findings if f.job == job.name and f.code == "JOB_OVERRUN"}
+        th = config.thresholds
+        found = check_failures(job, job_runs, th)
+        found += check_overruns(job, job_runs, th, server.now)
+        steps = check_steps(job, job_runs, th, server.now)
+        explained = {f.detail["start"] for f in found if f.code == "JOB_OVERRUN"}
         for f in steps:
             if f.detail["run_start"] in explained:
                 f.severity = INFO
                 f.message += "; this is what made the job overrun"
-        findings += steps
-        findings += check_running(job, runs.get(job.job_id, []), (running or {}).get(job.job_id),
-                                  config.thresholds, server.now)
-        findings += check_missed(job, runs.get(job.job_id, []), (running or {}).get(job.job_id),
-                                 (schedules or {}).get(job.job_id, []), config.thresholds, server.now, server.agent_start)
+        found += steps
+        found += check_running(job, job_runs, current, th, server.now)
+        found += check_missed(job, job_runs, current, schedules.get(job.job_id, []), th, server.now, server.agent_start)
+        summaries[job.name].missed_runs = sum(len(f.detail["missed"]) for f in found if f.code == "SCHEDULE_MISSED")
+        findings += found
     findings.sort(key=lambda f: (f.severity.rank, f.job.lower(), f.code))
-    return Report(server.name, server.now, checked, findings)
+    return Report(server.name, server.now, checked, findings, summaries)

@@ -2,6 +2,8 @@
 import json
 from dataclasses import asdict
 
+from .prometheus import render_prometheus
+
 
 def render_text(report):
     counts = report.counts()
@@ -28,7 +30,7 @@ def render_json(report):
     return json.dumps(doc, indent=2) + "\n"
 
 
-RENDERERS = {"text": render_text, "json": render_json}
+RENDERERS = {"text": render_text, "json": render_json, "prometheus": render_prometheus}
 
 
 def render(report, fmt="text"):
