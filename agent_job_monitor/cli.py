@@ -9,7 +9,9 @@ from .analysis import CRITICAL, WARNING, analyse
 from .collect import collect
 from .config import Config, ConfigError, load_config
 from .connection import DEFAULT_DRIVER
+from .prometheus import render_prometheus
 from .report import render
+from .textfile import write_atomically
 
 EXIT_OK, EXIT_WARNING, EXIT_CRITICAL, EXIT_ERROR = 0, 1, 2, 3
 
@@ -38,6 +40,8 @@ def build_parser():
     p.add_argument("--format", choices=("text", "json", "prometheus"), default="text",
                    help="report format (default: text)")
     p.add_argument("-o", "--output", help="write the report to this file instead of stdout")
+    p.add_argument("--textfile", metavar="PATH",
+                   help="also write the Prometheus metrics to PATH (a .prom file in the node_exporter textfile directory)")
     p.add_argument("--user", help="SQL login; the password is read from AGENT_JOB_MONITOR_PASSWORD")
     p.add_argument("--driver", default=DEFAULT_DRIVER, help="ODBC driver name (default: %(default)s)")
     p.add_argument("--no-encrypt", action="store_true", help="connect without encryption")
@@ -104,6 +108,11 @@ def main(argv=None, connect=None, stdout=None):
     except LookupError as exc:
         return _error(exc)
     report = analyse(collected.server, jobs, collected.runs, config, collected.running, collected.schedules)
+    if args.textfile:
+        try:
+            write_atomically(args.textfile, render_prometheus(report))
+        except OSError as exc:
+            return _error("cannot write %s: %s" % (args.textfile, exc))
     text = render(report, args.format)
     if args.output:
         with open(args.output, "w", encoding="utf-8") as fh:
