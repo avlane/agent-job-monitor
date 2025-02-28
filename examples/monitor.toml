@@ -1,0 +1,21 @@
+# Example configuration for agent-job-monitor. Pass it with --config.
+# Every key is optional; the values shown are the defaults unless noted.
+
+[thresholds]
+critical_failures = 3        # consecutive failed runs that make a failing job critical
+lookback_hours = 24          # findings older than this are not reported
+overrun_factor = 2.0         # a run is an overrun above this many times the median ...
+min_overrun_seconds = 300    # ... and at least this much longer than the median
+grace_minutes = 10           # a scheduled run may start this late before it counts as missed
+
+# Thresholds for single jobs; a name may contain * and ?. Keys not listed keep the values above.
+[jobs."ETL load"]
+critical_failures = 1
+
+[jobs."Index maintenance*"]
+overrun_factor = 3.0
+min_overrun_seconds = 900
+
+# Jobs that are never checked.
+[exclude]
+jobs = ["syspolicy_purge_history", "Replication*"]

@@ -1,4 +1,5 @@
-"""Thresholds for the checks, read from a TOML file."""
+"""Thresholds and job selection, read from a TOML file."""
+import fnmatch
 import tomllib
 from dataclasses import dataclass, field, fields, replace
 
@@ -25,32 +26,63 @@ class Thresholds:
 @dataclass
 class Config:
     thresholds: Thresholds = field(default_factory=Thresholds)
+    jobs: dict = field(default_factory=dict)  # lower-case job name or pattern -> Thresholds for that job
+    exclude_jobs: list = field(default_factory=list)  # job name patterns that are never checked
+
+    def thresholds_for(self, name):
+        """Per-job thresholds: an exact name wins, then the first matching pattern, else the defaults."""
+        key = name.lower()
+        if key in self.jobs:
+            return self.jobs[key]
+        for pattern, thresholds in self.jobs.items():
+            if fnmatch.fnmatchcase(key, pattern):
+                return thresholds
+        return self.thresholds
+
+    def is_excluded(self, job):
+        name = job.name.lower()
+        return any(fnmatch.fnmatchcase(name, pattern.lower()) for pattern in self.exclude_jobs)
 
 
-def _thresholds(section):
+def _thresholds(section, where, base=None):
     if not isinstance(section, dict):
-        raise ConfigError("[thresholds] must be a table")
-    known = {f.name: f for f in fields(Thresholds)}
-    unknown = set(section) - set(known)
+        raise ConfigError("%s must be a table" % where)
+    base = base or Thresholds()
+    known = {f.name for f in fields(Thresholds)}
+    unknown = set(section) - known
     if unknown:
-        raise ConfigError("[thresholds]: unknown key(s): %s" % ", ".join(sorted(unknown)))
+        raise ConfigError("%s: unknown key(s): %s" % (where, ", ".join(sorted(unknown))))
     values = {}
     for key, value in section.items():
         wants_int = isinstance(getattr(Thresholds(), key), int)
         valid = isinstance(value, int) if wants_int else isinstance(value, (int, float))
         if isinstance(value, bool) or not valid or value <= 0:
-            raise ConfigError("[thresholds] %s must be a positive %s" % (key, "whole number" if wants_int else "number"))
+            raise ConfigError("%s %s must be a positive %s" % (where, key, "whole number" if wants_int else "number"))
         values[key] = value
-    return replace(Thresholds(), **values)
+    return replace(base, **values)
+
+
+def _names(value, where):
+    if not isinstance(value, list) or not all(isinstance(v, str) and v.strip() for v in value):
+        raise ConfigError("%s must be a list of non-empty names or patterns" % where)
+    return list(value)
 
 
 def parse_config(data):
     if not isinstance(data, dict):
         raise ConfigError("the top level of the config must be a table")
-    unknown = set(data) - {"thresholds"}
+    unknown = set(data) - {"thresholds", "jobs", "exclude"}
     if unknown:
         raise ConfigError("unknown key(s): %s" % ", ".join(sorted(unknown)))
-    return Config(_thresholds(data.get("thresholds", {})))
+    defaults = _thresholds(data.get("thresholds", {}), "[thresholds]")
+    jobs_section = data.get("jobs", {})
+    if not isinstance(jobs_section, dict):
+        raise ConfigError("[jobs] must be a table of per-job tables")
+    jobs = {name.lower(): _thresholds(section, "[jobs.%s]" % name, defaults) for name, section in jobs_section.items()}
+    exclude = data.get("exclude", {})
+    if not isinstance(exclude, dict) or set(exclude) - {"jobs"}:
+        raise ConfigError("[exclude] must be a table with a jobs list")
+    return Config(defaults, jobs, _names(exclude.get("jobs", []), "[exclude] jobs"))
 
 
 def load_config(path):

@@ -267,12 +267,14 @@ def analyse(server, jobs, runs, config, running=None, schedules=None):
     running, schedules = running or {}, schedules or {}
     checked, findings, summaries = [], [], {}
     for job in jobs:
+        if config.is_excluded(job):
+            continue
         job_runs, current = runs.get(job.job_id, []), running.get(job.job_id)
         summaries[job.name] = summarise(job, job_runs, current, server.now)
         if not job.enabled:
             continue
         checked.append(job.name)
-        th = config.thresholds
+        th = config.thresholds_for(job.name)
         found = check_failures(job, job_runs, th)
         found += check_overruns(job, job_runs, th, server.now)
         steps = check_steps(job, job_runs, th, server.now)
