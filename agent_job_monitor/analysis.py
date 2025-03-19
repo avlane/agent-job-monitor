@@ -214,6 +214,24 @@ def check_missed(job, runs, running, schedules, thresholds, now, agent_start=Non
     return findings
 
 
+def check_history(job, runs, running, schedules, thresholds):
+    """Say when the checks cannot work well because a scheduled job has too little history."""
+    if not any(s.enabled for s in schedules):
+        return []  # on-demand jobs are not expected to have a rhythm
+    if not runs:
+        if running is not None:
+            return []  # the first run is in progress
+        return [Finding(job.name, "NO_HISTORY", INFO,
+                        "the job has an enabled schedule but no history; it may be new, or its history may have been purged")]
+    successes = sum(1 for r in runs if r.succeeded)
+    if successes < thresholds.min_runs:
+        return [Finding(job.name, "NO_BASELINE", INFO,
+                        "only %d successful run(s) in the history, at least %d are needed to judge run times; the Agent "
+                        "keeps only as much history as its retention settings allow" % (successes, thresholds.min_runs),
+                        {"successful_runs": successes, "needed": thresholds.min_runs})]
+    return []
+
+
 def check_running(job, runs, running, thresholds, now):
     """A job that is executing now for much longer than its successful runs usually take."""
     if running is None:
@@ -284,6 +302,7 @@ def analyse(server, jobs, runs, config, running=None, schedules=None):
                 f.severity = INFO
                 f.message += "; this is what made the job overrun"
         found += steps
+        found += check_history(job, job_runs, current, schedules.get(job.job_id, []), th)
         found += check_running(job, job_runs, current, th, server.now)
         found += check_missed(job, job_runs, current, schedules.get(job.job_id, []), th, server.now, server.agent_start)
         summaries[job.name].missed_runs = sum(len(f.detail["missed"]) for f in found if f.code == "SCHEDULE_MISSED")
