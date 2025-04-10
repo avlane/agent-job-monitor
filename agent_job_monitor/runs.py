@@ -1,5 +1,5 @@
 """Turn raw sysjobhistory rows into job runs with their steps."""
-from .model import JobRun, StepRun
+from .model import RETRY, JobRun, StepRun
 from .msdbtime import decode_datetime, decode_duration
 
 
@@ -21,7 +21,16 @@ def assemble_runs(rows):
             runs.setdefault(job_id, []).append(
                 JobRun(job_id, start, duration, int(row["run_status"]), row["message"] or "", steps))
         else:
-            open_steps.setdefault(job_id, []).append(
-                StepRun(int(row["step_id"]), row["step_name"], int(row["run_status"]), start, duration,
-                        row["message"] or "", int(row["sql_message_id"] or 0), int(row["sql_severity"] or 0)))
+            step = StepRun(int(row["step_id"]), row["step_name"], int(row["run_status"]), start, duration,
+                           row["message"] or "", int(row["sql_message_id"] or 0), int(row["sql_severity"] or 0))
+            pending = open_steps.setdefault(job_id, [])
+            if pending and _starts_over(pending[-1], step):
+                pending.clear()  # the run those steps belonged to never ended: the Agent or the server restarted
+            pending.append(step)
     return runs, open_steps
+
+
+def _starts_over(previous, step):
+    """Does this step row begin a new run? Step numbers only go up within a run, except that a step
+    that is retried writes another row with the same number."""
+    return step.step_id < previous.step_id or (step.step_id == previous.step_id and previous.status != RETRY)
