@@ -81,3 +81,11 @@ def expected_runs(schedule, start, end):
                     found.append(moment)
         day += timedelta(days=1)
     return found
+
+
+def interval_seconds(schedule):
+    """Seconds between two starts within a day, or None for a schedule that fires at a fixed time."""
+    unit = _SUBDAY_UNIT.get(schedule.freq_subday_type)
+    if schedule.freq_type == FREQ_ONCE or unit is None or schedule.freq_subday_interval <= 0:
+        return None
+    return unit * schedule.freq_subday_interval

@@ -21,6 +21,8 @@ class Thresholds:
     step_min_overrun_seconds: int = 120  # a step must also be this much longer than its median to be reported
     grace_minutes: float = 10.0  # a scheduled run may start this late before it counts as missed
     critical_missed: int = 3  # missed runs in the window that make the finding critical
+    min_schedule_seconds: int = 60  # schedules that fire more often than this are not checked for missed runs
+    max_expected: int = 500  # at most this many of the newest expected starts are examined per job
 
 
 @dataclass

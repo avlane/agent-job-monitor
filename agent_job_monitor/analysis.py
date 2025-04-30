@@ -7,7 +7,7 @@ from typing import Optional
 from .baseline import baseline_before, compute_baseline
 from .model import FAILED, SUCCEEDED
 from .msdbtime import format_duration
-from .schedules import expected_runs
+from .schedules import expected_runs, interval_seconds
 
 
 class Severity(StrEnum):
@@ -179,7 +179,8 @@ def check_missed(job, runs, running, schedules, thresholds, now, agent_start=Non
     """
     if not job.enabled:
         return []
-    schedules = [s for s in schedules if s.enabled]
+    schedules = [s for s in schedules if s.enabled and
+                 (interval_seconds(s) is None or interval_seconds(s) >= thresholds.min_schedule_seconds)]
     if not schedules:
         return []
     starts = [r.start for r in runs] + ([running.start] if running else [])
@@ -193,6 +194,7 @@ def check_missed(job, runs, running, schedules, thresholds, now, agent_start=Non
     if window_end < window_start:
         return []
     expected = sorted({t for s in schedules for t in expected_runs(s, window_start, window_end)})
+    expected = expected[-thresholds.max_expected:]
     busy = [(r.start, r.end) for r in runs] + ([(running.start, now)] if running else [])
     missed, skipped = [], []
     for t in expected:
