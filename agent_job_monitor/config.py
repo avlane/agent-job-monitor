@@ -23,6 +23,8 @@ class Thresholds:
     critical_missed: int = 3  # missed runs in the window that make the finding critical
     min_schedule_seconds: int = 60  # schedules that fire more often than this are not checked for missed runs
     max_expected: int = 500  # at most this many of the newest expected starts are examined per job
+    agent_silence_minutes: int = 30  # no job has started for this long ...
+    agent_silence_min_due: int = 3  # ... although at least this many scheduled starts were due
 
 
 @dataclass

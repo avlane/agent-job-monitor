@@ -57,7 +57,7 @@ class Report:
             "jobs": len(self.checked),
             "critical": sum(1 for s in worst.values() if s == CRITICAL),
             "warning": sum(1 for s in worst.values() if s == WARNING),
-            "ok": len(self.checked) - len(worst),
+            "ok": len(self.checked) - len([job for job in worst if job in set(self.checked)]),
         }
 
 
@@ -168,6 +168,32 @@ def check_steps(job, runs, thresholds, now):
                     {"run_start": run.start.isoformat(), "step_id": step.step_id, "step_name": step.name,
                      "duration_seconds": step.duration, "ratio": round(ratio, 2), "median_seconds": base.median,
                      "baseline_runs": base.runs})]
+
+
+AGENT = "(SQL Server Agent)"
+
+
+def check_agent(jobs, runs, running, schedules, thresholds, now, agent_start=None):
+    """The Agent itself: no job has started for a while although several scheduled starts were due."""
+    grace = timedelta(minutes=thresholds.grace_minutes)
+    window_start = now - timedelta(minutes=thresholds.agent_silence_minutes)
+    if agent_start is not None:
+        window_start = max(window_start, agent_start)
+    window_end = now - grace
+    if window_end <= window_start:
+        return []
+    starts = [r.start for job_runs in runs.values() for r in job_runs] + [r.start for r in running.values()]
+    if any(s >= window_start - grace for s in starts):
+        return []
+    due = [t for job in jobs if job.enabled for s in schedules.get(job.job_id, []) if s.enabled
+           for t in expected_runs(s, window_start, window_end)]
+    if len(due) < thresholds.agent_silence_min_due:
+        return []
+    last = max(starts).strftime("%Y-%m-%d %H:%M") if starts else "the start of the history"
+    return [Finding(AGENT, "AGENT_SILENT", CRITICAL,
+                    "no job has started since %s, although %d scheduled start(s) were due in the last %d minutes; "
+                    "is SQL Server Agent running?" % (last, len(due), thresholds.agent_silence_minutes),
+                    {"due": len(due), "last_start": max(starts).isoformat() if starts else None})]
 
 
 def check_missed(job, runs, running, schedules, thresholds, now, agent_start=None):
@@ -309,5 +335,6 @@ def analyse(server, jobs, runs, config, running=None, schedules=None):
         found += check_missed(job, job_runs, current, schedules.get(job.job_id, []), th, server.now, server.agent_start)
         summaries[job.name].missed_runs = sum(len(f.detail["missed"]) for f in found if f.code == "SCHEDULE_MISSED")
         findings += found
+    findings += check_agent(jobs, runs, running, schedules, config.thresholds, server.now, server.agent_start)
     findings.sort(key=lambda f: (f.severity.rank, f.job.lower(), f.code))
     return Report(server.name, server.now, checked, findings, summaries)
