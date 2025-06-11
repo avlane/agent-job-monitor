@@ -27,11 +27,46 @@ class Thresholds:
     agent_silence_min_due: int = 3  # ... although at least this many scheduled starts were due
 
 
+KINDS = ("overrun", "steps", "running", "missed")  # what a maintenance window can silence
+_DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+@dataclass(frozen=True)
+class MaintenanceWindow:
+    """A time of day (and optionally days of the week) in which long or late runs are expected."""
+
+    start: int  # seconds since midnight
+    end: int
+    days: tuple = ()  # weekday numbers (Monday is 0) of the day the window starts; empty means every day
+    jobs: tuple = ()  # name patterns; empty means every job
+    suppress: tuple = KINDS
+    name: str = ""
+
+    def covers(self, moment):
+        seconds = moment.hour * 3600 + moment.minute * 60 + moment.second
+        if self.start <= self.end:
+            inside, start_day = self.start <= seconds < self.end, moment.weekday()
+        elif seconds >= self.start:
+            inside, start_day = True, moment.weekday()
+        else:  # the part of an overnight window after midnight belongs to the day before
+            inside, start_day = seconds < self.end, (moment.weekday() - 1) % 7
+        return inside and (not self.days or start_day in self.days)
+
+    def applies_to(self, job_name):
+        name = job_name.lower()
+        return not self.jobs or any(fnmatch.fnmatchcase(name, pattern.lower()) for pattern in self.jobs)
+
+
 @dataclass
 class Config:
     thresholds: Thresholds = field(default_factory=Thresholds)
     jobs: dict = field(default_factory=dict)  # lower-case job name or pattern -> Thresholds for that job
     exclude_jobs: list = field(default_factory=list)  # job name patterns that are never checked
+    maintenance: list = field(default_factory=list)  # MaintenanceWindow
+
+    def in_maintenance(self, job_name, moment, kind):
+        """Is `moment` inside a window that silences `kind` findings for this job?"""
+        return any(w.covers(moment) and w.applies_to(job_name) and kind in w.suppress for w in self.maintenance)
 
     def thresholds_for(self, name):
         """Per-job thresholds: an exact name wins, then the first matching pattern, else the defaults."""
@@ -72,10 +107,42 @@ def _names(value, where):
     return list(value)
 
 
+def _clock(text, where):
+    try:
+        hours, minutes = text.split(":")
+        hours, minutes = int(hours), int(minutes)
+    except (AttributeError, ValueError):
+        raise ConfigError("%s must be a time like 02:30" % where) from None
+    if not (0 <= hours <= 24 and 0 <= minutes < 60) or (hours == 24 and minutes):
+        raise ConfigError("%s must be a time like 02:30" % where)
+    return hours * 3600 + minutes * 60
+
+
+def _window(entry, number):
+    where = "[[maintenance]] #%d" % number
+    if not isinstance(entry, dict):
+        raise ConfigError("%s must be a table" % where)
+    unknown = set(entry) - {"name", "start", "end", "days", "jobs", "suppress"}
+    if unknown:
+        raise ConfigError("%s: unknown key(s): %s" % (where, ", ".join(sorted(unknown))))
+    if "start" not in entry or "end" not in entry:
+        raise ConfigError("%s needs start and end" % where)
+    days = entry.get("days", [])
+    if not isinstance(days, list) or any(d not in _DAYS for d in days):
+        raise ConfigError("%s: days must be a list of %s" % (where, ", ".join(_DAYS)))
+    suppress = entry.get("suppress", list(KINDS))
+    if not isinstance(suppress, list) or not suppress or any(k not in KINDS for k in suppress):
+        raise ConfigError("%s: suppress must be a list of %s" % (where, ", ".join(KINDS)))
+    return MaintenanceWindow(
+        _clock(entry["start"], where + " start"), _clock(entry["end"], where + " end"),
+        tuple(_DAYS.index(d) for d in days), tuple(_names(entry.get("jobs", []), where + " jobs")),
+        tuple(suppress), str(entry.get("name", "")))
+
+
 def parse_config(data):
     if not isinstance(data, dict):
         raise ConfigError("the top level of the config must be a table")
-    unknown = set(data) - {"thresholds", "jobs", "exclude"}
+    unknown = set(data) - {"thresholds", "jobs", "exclude", "maintenance"}
     if unknown:
         raise ConfigError("unknown key(s): %s" % ", ".join(sorted(unknown)))
     defaults = _thresholds(data.get("thresholds", {}), "[thresholds]")
@@ -86,7 +153,11 @@ def parse_config(data):
     exclude = data.get("exclude", {})
     if not isinstance(exclude, dict) or set(exclude) - {"jobs"}:
         raise ConfigError("[exclude] must be a table with a jobs list")
-    return Config(defaults, jobs, _names(exclude.get("jobs", []), "[exclude] jobs"))
+    windows = data.get("maintenance", [])
+    if not isinstance(windows, list):
+        raise ConfigError("maintenance must be a list of [[maintenance]] tables")
+    return Config(defaults, jobs, _names(exclude.get("jobs", []), "[exclude] jobs"),
+                  [_window(entry, n) for n, entry in enumerate(windows, 1)])
 
 
 def load_config(path):

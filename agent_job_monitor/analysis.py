@@ -108,12 +108,12 @@ def overrun_limit(baseline, thresholds):
                baseline.median + thresholds.overrun_mad_multiplier * baseline.sigma)
 
 
-def check_overruns(job, runs, thresholds, now):
+def check_overruns(job, runs, thresholds, now, skip=None):
     """The worst overrun among the successful runs that started within the look-back window."""
     window_start = now - timedelta(hours=thresholds.lookback_hours)
     worst, count = None, 0
     for index, run in enumerate(runs):
-        if not run.succeeded or run.start < window_start:
+        if not run.succeeded or run.start < window_start or (skip is not None and skip(run.start)):
             continue
         base = baseline_before(runs, index, thresholds.baseline_runs)
         if base is None or base.runs < thresholds.min_runs:
@@ -137,12 +137,12 @@ def check_overruns(job, runs, thresholds, now):
                      "baseline_runs": base.runs, "overruns_in_window": count})]
 
 
-def check_steps(job, runs, thresholds, now):
+def check_steps(job, runs, thresholds, now, skip=None):
     """The step of a recent successful run that took the longest compared with the same step before."""
     window_start = now - timedelta(hours=thresholds.lookback_hours)
     worst = None
     for index, run in enumerate(runs):
-        if not run.succeeded or run.start < window_start:
+        if not run.succeeded or run.start < window_start or (skip is not None and skip(run.start)):
             continue
         earlier = [r for r in runs[:index] if r.succeeded]
         for step in run.steps:
@@ -196,7 +196,7 @@ def check_agent(jobs, runs, running, schedules, thresholds, now, agent_start=Non
                     {"due": len(due), "last_start": max(starts).isoformat() if starts else None})]
 
 
-def check_missed(job, runs, running, schedules, thresholds, now, agent_start=None):
+def check_missed(job, runs, running, schedules, thresholds, now, agent_start=None, skip=None):
     """Scheduled starts in the look-back window for which the job has no run.
 
     Expected times are computed from the enabled schedules. A start is not missed if the job was
@@ -221,6 +221,8 @@ def check_missed(job, runs, running, schedules, thresholds, now, agent_start=Non
         return []
     expected = sorted({t for s in schedules for t in expected_runs(s, window_start, window_end)})
     expected = expected[-thresholds.max_expected:]
+    if skip is not None:
+        expected = [t for t in expected if not skip(t)]
     busy = [(r.start, r.end) for r in runs] + ([(running.start, now)] if running else [])
     missed, skipped = [], []
     for t in expected:
@@ -260,9 +262,9 @@ def check_history(job, runs, running, schedules, thresholds):
     return []
 
 
-def check_running(job, runs, running, thresholds, now):
+def check_running(job, runs, running, thresholds, now, skip=None):
     """A job that is executing now for much longer than its successful runs usually take."""
-    if running is None:
+    if running is None or (skip is not None and skip(now)):
         return []
     elapsed = (now - running.start).total_seconds()
     earlier = [r.duration for r in runs if r.succeeded][-thresholds.baseline_runs:]
@@ -321,9 +323,12 @@ def analyse(server, jobs, runs, config, running=None, schedules=None):
             continue
         checked.append(job.name)
         th = config.thresholds_for(job.name)
+        def quiet(kind, name=job.name):
+            return lambda moment: config.in_maintenance(name, moment, kind)
+
         found = check_failures(job, job_runs, th)
-        found += check_overruns(job, job_runs, th, server.now)
-        steps = check_steps(job, job_runs, th, server.now)
+        found += check_overruns(job, job_runs, th, server.now, quiet("overrun"))
+        steps = check_steps(job, job_runs, th, server.now, quiet("steps"))
         explained = {f.detail["start"] for f in found if f.code == "JOB_OVERRUN"}
         for f in steps:
             if f.detail["run_start"] in explained:
@@ -331,8 +336,9 @@ def analyse(server, jobs, runs, config, running=None, schedules=None):
                 f.message += "; this is what made the job overrun"
         found += steps
         found += check_history(job, job_runs, current, schedules.get(job.job_id, []), th)
-        found += check_running(job, job_runs, current, th, server.now)
-        found += check_missed(job, job_runs, current, schedules.get(job.job_id, []), th, server.now, server.agent_start)
+        found += check_running(job, job_runs, current, th, server.now, quiet("running"))
+        found += check_missed(job, job_runs, current, schedules.get(job.job_id, []), th, server.now,
+                              server.agent_start, quiet("missed"))
         summaries[job.name].missed_runs = sum(len(f.detail["missed"]) for f in found if f.code == "SCHEDULE_MISSED")
         findings += found
     findings += check_agent(jobs, runs, running, schedules, config.thresholds, server.now, server.agent_start)

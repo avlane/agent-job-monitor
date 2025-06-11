@@ -19,3 +19,12 @@ min_overrun_seconds = 900
 # Jobs that are never checked.
 [exclude]
 jobs = ["syspolicy_purge_history", "Replication*"]
+
+# Times in which long runs and late starts are expected. Failures are always reported.
+[[maintenance]]
+name = "weekend index rebuild"
+start = "22:00"
+end = "02:30"             # a window may cross midnight
+days = ["sat"]            # the day the window starts; leave out for every day
+jobs = ["Index maintenance*"]
+suppress = ["overrun", "steps", "running", "missed"]
