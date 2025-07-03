@@ -19,6 +19,7 @@ min_overrun_seconds = 900
 # Jobs that are never checked.
 [exclude]
 jobs = ["syspolicy_purge_history", "Replication*"]
+categories = ["REPL-*", "Report Server"]
 
 # Times in which long runs and late starts are expected. Failures are always reported.
 [[maintenance]]

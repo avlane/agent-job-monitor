@@ -62,6 +62,7 @@ class Config:
     thresholds: Thresholds = field(default_factory=Thresholds)
     jobs: dict = field(default_factory=dict)  # lower-case job name or pattern -> Thresholds for that job
     exclude_jobs: list = field(default_factory=list)  # job name patterns that are never checked
+    exclude_categories: list = field(default_factory=list)  # job category patterns that are never checked
     maintenance: list = field(default_factory=list)  # MaintenanceWindow
 
     def in_maintenance(self, job_name, moment, kind):
@@ -79,8 +80,9 @@ class Config:
         return self.thresholds
 
     def is_excluded(self, job):
-        name = job.name.lower()
-        return any(fnmatch.fnmatchcase(name, pattern.lower()) for pattern in self.exclude_jobs)
+        name, category = job.name.lower(), job.category.lower()
+        return (any(fnmatch.fnmatchcase(name, pattern.lower()) for pattern in self.exclude_jobs)
+                or any(fnmatch.fnmatchcase(category, pattern.lower()) for pattern in self.exclude_categories))
 
 
 def _thresholds(section, where, base=None):
@@ -151,12 +153,13 @@ def parse_config(data):
         raise ConfigError("[jobs] must be a table of per-job tables")
     jobs = {name.lower(): _thresholds(section, "[jobs.%s]" % name, defaults) for name, section in jobs_section.items()}
     exclude = data.get("exclude", {})
-    if not isinstance(exclude, dict) or set(exclude) - {"jobs"}:
-        raise ConfigError("[exclude] must be a table with a jobs list")
+    if not isinstance(exclude, dict) or set(exclude) - {"jobs", "categories"}:
+        raise ConfigError("[exclude] must be a table with jobs and categories lists")
     windows = data.get("maintenance", [])
     if not isinstance(windows, list):
         raise ConfigError("maintenance must be a list of [[maintenance]] tables")
     return Config(defaults, jobs, _names(exclude.get("jobs", []), "[exclude] jobs"),
+                  _names(exclude.get("categories", []), "[exclude] categories"),
                   [_window(entry, n) for n, entry in enumerate(windows, 1)])
 
 
