@@ -298,13 +298,22 @@ class JobSummary:
     consecutive_failures: int = 0
     running_seconds: Optional[int] = None
     missed_runs: int = 0
+    median_seconds: Optional[float] = None  # baseline of the newest successful runs
+    p95_seconds: Optional[float] = None
+    last_run_ratio: Optional[float] = None  # duration of the newest run divided by the median before it
 
 
-def summarise(job, runs, running, now):
+def summarise(job, runs, running, now, thresholds):
     summary = JobSummary(job.name, job.enabled, consecutive_failures=consecutive_failures(runs))
     if runs:
         last = runs[-1]
         summary.last_status, summary.last_start, summary.last_duration = last.status, last.start, last.duration
+        base = baseline_before(runs, len(runs), thresholds.baseline_runs)
+        if base is not None and base.runs >= thresholds.min_runs:
+            summary.median_seconds, summary.p95_seconds = base.median, base.p95
+        before = baseline_before(runs, len(runs) - 1, thresholds.baseline_runs)
+        if last.succeeded and before is not None and before.runs >= thresholds.min_runs and before.median:
+            summary.last_run_ratio = last.duration / before.median
     if running is not None:
         summary.running_seconds = max(0, round((now - running.start).total_seconds()))
     return summary
@@ -318,7 +327,7 @@ def analyse(server, jobs, runs, config, running=None, schedules=None):
         if config.is_excluded(job):
             continue
         job_runs, current = runs.get(job.job_id, []), running.get(job.job_id)
-        summaries[job.name] = summarise(job, job_runs, current, server.now)
+        summaries[job.name] = summarise(job, job_runs, current, server.now, config.thresholds_for(job.name))
         if not job.enabled:
             continue
         checked.append(job.name)

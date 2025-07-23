@@ -35,6 +35,12 @@ JOB_METRICS = (
      lambda s, now: s.running_seconds),
     ("agent_job_missed_runs", "Scheduled starts in the look-back window for which the job has no run.",
      lambda s, now: s.missed_runs),
+    ("agent_job_duration_median_seconds", "Median duration of the job's newest successful runs (the baseline).",
+     lambda s, now: s.median_seconds),
+    ("agent_job_duration_p95_seconds", "95th percentile duration of the job's newest successful runs.",
+     lambda s, now: s.p95_seconds),
+    ("agent_job_last_run_overrun_ratio", "Duration of the newest successful run divided by the median of the runs before it.",
+     lambda s, now: s.last_run_ratio),
 )
 
 

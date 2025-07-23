@@ -104,3 +104,29 @@ class RenderPrometheusTest(unittest.TestCase):
                     connect=lambda a: connection_from_fixture("healthy"), stdout=out)
         self.assertEqual(code, 0)
         self.assertIn("# TYPE agent_job_last_run_succeeded gauge", out.getvalue())
+
+
+class BaselineMetricsTest(unittest.TestCase):
+    def setUp(self):
+        self.samples = parse(render_prometheus(report_for("problems")))
+
+    def value(self, metric, job):
+        return self.samples.get((metric, (("server", "SQLPROD01"), ("job", job))))
+
+    def test_median_and_p95(self):
+        median = self.value("agent_job_duration_median_seconds", "Nightly backup")
+        p95 = self.value("agent_job_duration_p95_seconds", "Nightly backup")
+        self.assertTrue(1500 < median < 1650, median)
+        self.assertGreater(p95, median)
+
+    def test_overrun_ratio_of_the_newest_run(self):
+        self.assertGreater(self.value("agent_job_last_run_overrun_ratio", "Nightly backup"), 2.0)
+        self.assertLess(self.value("agent_job_last_run_overrun_ratio", "Purge history"), 1.2)
+
+    def test_failed_last_runs_have_no_ratio(self):
+        self.assertIsNone(self.value("agent_job_last_run_overrun_ratio", "ETL load"))
+
+    def test_jobs_without_enough_history_have_no_baseline_metrics(self):
+        report = analyse(server(), [job(job_id="N")], {"N": history(1, 1)}, Config())
+        samples = parse(render_prometheus(report))
+        self.assertFalse([k for k in samples if k[0] == "agent_job_duration_median_seconds"])
